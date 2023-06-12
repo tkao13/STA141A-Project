@@ -1,0 +1,430 @@
+---
+title: "Mouse Task Predictions"
+author: "Tristan Kao 919875973"
+date: "2023-05-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Abstract
+
+Data was gathered from four mice's brains in order to get insight on what is going on in their brain when they are told to do a task. We then made multiple visualizations of the spike and neuron activity in order to be able predict when a mouse is doing the activity in order to find any trends.  After that we will create a data frame and integrate it to a prediction to finally find the accuracy.  
+
+## Introduction
+
+The main mission of the project is to predict whether or not the mouse is going to be able to do the task that it is told to do. The origin of the data comes from an experiment conducted on four mice. Each mouse was told to do a certain task for many trials over 18 sessions. During each trial, the mouse's brain would be scanned for data. Factors such as brain area, spike count, stimulus are variables that are considered for in order to make the best prediction model. In order to find the patterns, multiple visual models are made. This makes it so that only the necessary variables are implemented in the prediction model. After that, the data must be integrated so that a better prediction can be made. Lastly, a prediction model will be made.
+
+```{r}
+setwd("/users/Tristan/Downloads/sessions")
+session = list()
+for(i in 1:18){
+  session[[i]] = readRDS(paste("/users/Tristan/Downloads/sessions/session",i,".rds",sep=""))
+}
+
+
+```
+
+## Exploratory Analysis
+
+Table
+
+```{r,echo = FALSE}
+
+
+library(tidyverse)
+library(knitr)
+library(dplyr)
+session=list()
+for(i in 1:18){
+  session[[i]] = readRDS(paste("/users/Tristan/Downloads/sessions/session",i,".rds",sep=""))
+  
+}
+n.session=length(session)
+
+meta <- tibble(
+  mouse_name = rep('name',n.session),
+  date =rep('dt',n.session),
+  brain_area = rep(0,n.session),
+  neuron_amount = rep(0,n.session),
+  trials = rep(0,n.session),
+  success_rate = rep(0,n.session)
+  
+)
+for(i in 1:n.session){
+  tmp = session[[i]];
+  meta[i,1]=tmp$mouse_name;
+  meta[i,2]=tmp$date_exp;
+  meta[i,3]=length(unique(tmp$brain_area));
+  meta[i,4]=dim(tmp$spks[[1]])[1];
+  meta[i,5]=length(tmp$feedback_type);
+  meta[i,6]=mean(tmp$feedback_type+1)/2;
+}
+kable(meta, format = "html", table.attr = "class='table table-striped'",digits=2)
+
+```
+
+The table gives an overview of the dataset and gives a good idea of where each mouse stands in terms of success rate.
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+all_data <- data.frame()
+
+for (i in 1:18) {
+  session_data <- session[[i]]$spks
+  
+  pulse_rates <- lapply(session_data, function(trial) colSums(trial)/ncol(trial))
+  
+  pulse_rates <- unlist(pulse_rates)
+  
+  pulse_rates <- data.frame(PulseRate = pulse_rates, Session = rep(i, length(pulse_rates)))
+  
+  all_data <- rbind(all_data, pulse_rates)
+}
+
+max_density_positions <- all_data %>%
+  group_by(Session) %>%
+  do(data.frame(MaxDensPos = with(density(.$PulseRate), x[which.max(y)]),
+                MaxDens = with(density(.$PulseRate), max(y))))
+
+p <- ggplot(all_data, aes(x = PulseRate, color = as.factor(Session))) +
+  geom_density(alpha = 0.5) +
+  geom_text(data = max_density_positions, 
+            aes(x = MaxDensPos, y = MaxDens, label = Session), 
+            color = "black", vjust = -0.5) +
+  labs(x = "Pulse Rate (spikes per day)", y = "Density", 
+       title = "Density Curves for all Sessions", 
+       color = "Session Number") 
+
+print(p)
+
+```
+
+Through running a loop of 18 sessions, we decided to compare the density and the pulse rate of the of each session of the experiment. The pulse rate represents the amount of spikes that appear per day since each session take a day to record. We found that most of the sessions had a pulse rate of around 0.75 spikes per day. This gives a better idea of picking which session and trial we can look at in order to integrate the data. We also choose not to look at data outside of 0.75 spikes per day since we want to have a more accurate prediction.
+
+```{r}
+density_data <- data.frame()
+
+for (i in 1:18) {
+  session_data <- session[[i]]$spks
+  
+  pulse_rates <- lapply(session_data, function(trial) colSums(trial)/ncol(trial))
+  
+  pulse_rates <- unlist(pulse_rates)
+  
+  density_data <- rbind(density_data, 
+                        data.frame(Mouse = session[[i]]$mouse_name,
+                                   PulseRate = pulse_rates))
+}
+
+ggplot(density_data, aes(x = PulseRate, fill = as.factor(Mouse))) +
+  geom_density(alpha = 0.4) +
+  labs(x = "Pulse Rate (spikes per day)", 
+       y = "Density", 
+       fill = "Mouse") +
+  theme_minimal() +
+  guides(fill = guide_legend(override.aes = list(alpha = 1)))
+
+```
+
+We also decided to look at the individual mice that were involved in the experiment. We found that Cori has the slowest pulse rate and that Leaderberg had the fastest pulse rate. Next, this is where we find out whether or pulse rate correlates with success rate.
+
+```{r}
+library(ggplot2)
+
+df_success_rate <- data.frame()
+
+for(i in 1:18){
+  mouse_name = session[[i]]$mouse_name
+  total_trials = length(session[[i]]$feedback_type)
+  success_rate = sum(session[[i]]$feedback_type == 1) / total_trials * 10  
+  df_success_rate = rbind(df_success_rate, data.frame(Mouse = mouse_name, SuccessRate = success_rate))
+}
+
+ggplot(df_success_rate, aes(x = Mouse, y = SuccessRate)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  ggtitle("Success Rate per Mouse") +
+  xlab("Mouse") +
+  ylab("Success Rate (%)") +  # add % to the label
+  theme_minimal()
+
+
+```
+
+Here, we find that Cori has the lowest success rate and Leaderberg has the highest success rate.  For Forssmann and Hench, they had similar success rates. We found that since Cori actually had the highest pulse rate and Leaderberg had the lowest pulse rate, there is a negative correlation between pulse rate and success rate.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+plots <- list()
+
+for (j in 1:18) {
+
+  session_data <- session[[j]]
+  
+  grouped_data <- split(session_data$spks, session_data$feedback_type)
+  
+  avg_spikes <- lapply(grouped_data, function(trials) {
+    sapply(trials, function(trial) mean(unlist(trial)))
+  })
+  
+  avg_spikes_df <- data.frame(
+    FeedbackType = rep(c("Failure", "Success"), sapply(avg_spikes, length)),
+    AvgSpikes = unlist(avg_spikes)
+  )
+  
+  p <- ggplot(avg_spikes_df, aes(x = FeedbackType, y = AvgSpikes, fill = FeedbackType)) +
+    geom_col() +
+    scale_fill_manual(values = c("Failure" = "red", "Success" = "green")) +
+    labs(x = "Feedback Type", y = "Average Number of Spikes", 
+         title = paste("Session", j, ": Average Spikes for Failed and Successful Trials")) +
+    theme_minimal()
+
+  plots[[j]] <- p
+}
+
+for (plot in plots) {
+  print(plot)
+}
+
+```
+
+Through making a bar graph for every session for the average spikes, we can see that the successful trials appear to average more spikes than the trials that failed. This gives us a better idea on how we predict the success rate off the average spikes of each upcoming trail. 
+
+```{r}
+library(tidyverse)
+i.s=3 
+
+i.t=1  
+
+spk.trial = session[[i.s]]$spks[[i.t]]
+area=session[[i.s]]$brain_area
+
+spk.count=apply(spk.trial,1,sum)
+
+
+
+
+spk.average.tapply=tapply(spk.count, area, mean)
+
+
+
+tmp <- data.frame(
+  area = area,
+  spikes = spk.count
+)
+spk.average.dplyr =tmp %>%
+  group_by(area) %>%
+  summarize(mean= mean(spikes))
+
+
+```
+
+```{r}
+average_spike_area<-function(i.t,this_session){
+  spk.trial = this_session$spks[[i.t]]
+  area= this_session$brain_area
+  spk.count=apply(spk.trial,1,sum)
+  spk.average.tapply=tapply(spk.count, area, mean)
+  return(spk.average.tapply)
+  }
+
+average_spike_area(1,this_session = session[[i.s]])
+n.trial=length(session[[i.s]]$feedback_type)
+n.area=length(unique(session[[i.s]]$brain_area ))
+
+
+trial.summary =matrix(nrow=n.trial,ncol= n.area+1+2+1)
+for(i.t in 1:n.trial){
+  trial.summary[i.t,]=c(average_spike_area(i.t,this_session = session[[i.s]]),
+                          session[[i.s]]$feedback_type[i.t],
+                        session[[i.s]]$contrast_left[i.t],
+                        session[[i.s]]$contrast_right[i.s],
+                        i.t)
+}
+
+colnames(trial.summary)=c(names(average_spike_area(i.t,this_session = session[[i.s]])), 'feedback', 'left contr.','right contr.','id' )
+
+trial.summary <- as_tibble(trial.summary)
+trial.summary
+```
+
+We were able to calculate and give out the average spikes in each brain area. We only looked at trial in order to see which part of brain had the most activity. We also created a data frame for the trial summary which includes the feedback from the trial and the stimulus. Although we could not find any trends, we can conclude that the brain area does not affect the prediction of the success rate.
+
+## Data Integration
+
+All sessions combined
+
+```{r}
+session_summary <- list()
+
+for (i in 1:18) {
+  for (j in 1:length(session[[i]]$feedback_type)) {
+    spks_values <- c(session[[i]]$spks[[j]])
+    spks_mean <- mean(spks_values)
+    spks_max <- max(spks_values)
+
+    pulse_rate <- spks_mean / ncol(session[[i]]$spks[[j]])
+
+
+
+    avg_spikes_per_trial <- mean(session[[i]]$spks[[j]])
+
+
+    pulse_rate_vs_density <- pulse_rate / density(spks_values)$x[which.max(density(spks_values)$y)]
+
+
+
+
+    session_summary[[length(session_summary) + 1]] <- data.frame(
+      session_number = i,
+      feedback_type = session[[i]]$feedback_type[j],
+      contrast_left = session[[i]]$contrast_left[j],
+      contrast_right = session[[i]]$contrast_right[j],
+      spks_mean = spks_mean,
+      spks_max = spks_max,
+      pulse_rate = pulse_rate,
+      avg_spikes_per_trial = avg_spikes_per_trial,
+      pulse_rate_vs_density = pulse_rate_vs_density
+    )
+  }
+}
+
+
+session_all_df <- do.call(rbind, session_summary)
+
+```
+
+In order to start integrating the data, we had to combine the all the sessions in order to make one large dataset. In the loop, every feedback type is taken into account for each session. Within that loop, the mean of the spikes were calculated for each trial. We also include the pulse rate and density since and the average spikes per trial since we found that they were correlated with the success rate of the experiment from our exploratory analysis. We then took these values and turned it into a data frame by first clumping all the data into a summary and then binding it into a data frame. This allows us to use the data and integrate it into a prediction model.
+
+## Predictive Model
+
+```{r}
+session_all_df$feedback_type <- (session_all_df$feedback_type + 1) / 2
+
+logistic_model <- glm(feedback_type ~  spks_max + pulse_rate  +
+                      avg_spikes_per_trial + pulse_rate_vs_density, 
+                      data = session_all_df, family = binomial())
+
+summary(logistic_model)
+
+
+
+```
+
+With the data frame, a logistic or general linear model was created as the prediction model. This will also be the model that we use to predict the missing values in sessions 1 and 18.
+
+## Predictive Performance
+
+```{r}
+setwd("C:/Users/Tristan/Downloads/test")
+test=list()
+for(i in 1:2){
+  test[[i]]=readRDS(paste("C:/Users/Tristan/Downloads/test/test",i,'.rds',sep=''))
+}
+
+
+```
+
+This is where the missing values is activated for R. This new dataset will be called 'test' since this will be the data that we will be using to test the prediction of our model.  The code will also be run through a loop since it is split into two sessions.
+
+```{r}
+
+
+n.test=length(test)
+
+meta <- tibble(
+  mouse_name = rep('name',n.test),
+  date =rep('dt',n.test),
+  brain_area = rep(0,n.test),
+  neurons = rep(0,n.test),
+  trials = rep(0,n.test),
+  success_rate = rep(0,n.test)
+)
+
+
+for(i in 1:n.test){
+  tmp = test[[i]];
+  meta[i,1]=tmp$mouse_name;
+  meta[i,2]=tmp$date_exp;
+  meta[i,3]=length(unique(tmp$brain_area));
+  meta[i,4]=dim(tmp$spks[[1]])[1];
+  meta[i,5]=length(tmp$feedback_type);
+  meta[i,6]=mean(tmp$feedback_type+1)/2;
+}
+
+
+kable(meta, format = "html", table.attr = "class='table table-striped'",digits=2) 
+
+
+```
+
+This is overall summary statistic for the testing data.  The testing data will only contain two of mice.  Both having a relatively high success rate above 70 percent.
+
+```{r}
+test_summary <- list()
+
+test_length <- length(test)
+
+for (i in 1:test_length) {
+  for (j in 1:length(test[[i]]$feedback_type)) {
+    spks_values <- c(test[[i]]$spks[[j]])
+    spks_mean <- mean(spks_values)
+    spks_sd <- sd(spks_values)
+    spks_max <- max(spks_values)
+    
+    avg_spikes_per_trial <- mean(spks_values)
+
+    pulse_rate <- spks_mean / ncol(test[[i]]$spks[[j]])
+    avg_spikes_per_neuron_per_trial <- mean(rowSums(test[[i]]$spks[[j]]))
+    pulse_rate_vs_density <- pulse_rate / density(spks_values)$x[which.max(density(spks_values)$y)]
+    
+  
+    test_summary[[length(test_summary) + 1]] <- data.frame(
+      session_number = i,
+      feedback_type = test[[i]]$feedback_type[j],
+      contrast_left = test[[i]]$contrast_left[j],
+      contrast_right = test[[i]]$contrast_right[j],
+      spks_mean = spks_mean,
+      spks_sd = spks_sd,
+      spks_max = spks_max,
+      pulse_rate = pulse_rate,
+      avg_spikes_per_trial = avg_spikes_per_trial,
+      pulse_rate_vs_density = pulse_rate_vs_density
+    )
+  }
+}
+
+test_all_df <- do.call(rbind, test_summary)
+
+
+```
+
+Similar to the previous data integration, the new data is combined in order to make a new data frame.
+
+```{r}
+test_all_df$feedback_type <- ifelse(test_all_df$feedback_type == -1, 0, 1)
+
+test_all_df$predicted <- ifelse(predict(logistic_model, newdata = test_all_df, type = "response") > 0.5, 1, 0)
+
+misclassification_rate <- mean(test_all_df$predicted != test_all_df$feedback_type)
+print(paste("Misclassification Rate: ", misclassification_rate))
+
+
+
+
+```
+
+For accuracy, we decided to calculate the misclassification rate and by using the same logistic model that used for sessions but instead of using the 'session' data, we use the 'test' data. We found the model ended up being over 70 percent making the model accurate.
+
+## Discussion
+
+Overall through much analysis of visual plotting, we found that the success of the mice depended on multiple variables such as spikes and rate that the neurons are firing those spikes. All the sessions were combined in order make a data frame. We decided to do all the sessions instead of some of them since we wanted to get a more general prediction on our test data. Finally, when we finally got our test data, a logistic model was created since we anticipate a linear relationship between the success rate and all the varaible that were used. In order to test the test accuracy of the model, a regular missclassfication rate was calculate in order to calculate the error rate.  Through the misclassification rate testing, the prediction model ended up getting an error rate of 27.5% making the model over 70%. We can now conclude that the model accurately predicts the success of the mouse doing any task in the experiment.
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+```
